@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JETRL</title>
+<link rel="stylesheet" href="/static/style.css?v=5">
+<script type="importmap">
+{ "imports": { "three": "/static/vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<canvas id="horizon"></canvas>
+
+<div id="hud">
+  <div id="top">
+    <span id="title">JETRL</span>
+    <span id="heading">HDG 000</span>
+    <span id="mode">IDLE</span>
+  </div>
+
+  <div id="left">
+    <div class="lbl">SPD</div>
+    <div class="num" id="spd">000</div>
+    <div class="unit">M/S</div>
+    <div class="sub" id="thr">THR 000</div>
+    <div class="vbar" aria-hidden="true"><span id="thrFill"></span></div>
+  </div>
+
+  <div id="right">
+    <div class="lbl">ALT</div>
+    <div class="num" id="alt">000</div>
+    <div class="unit">M</div>
+    <div class="sub">G <span id="gforce">1.0</span></div>
+  </div>
+
+  <div id="gateblock">
+    <div>GATE <span id="gate">01</span><span id="gateOf">/09</span></div>
+    <div>LAP <span id="lap">--:--.-</span></div>
+  </div>
+
+  <div id="warn"></div>
+
+  <div id="times">
+    <div><span class="lbl">MANUAL</span> <span id="bestManual">--:--.-</span></div>
+    <div><span class="lbl">AI</span> <span id="bestAi">--:--.-</span></div>
+  </div>
+
+  <div id="keys" hidden>W/S THROTTLE &nbsp; ARROWS PITCH/ROLL &nbsp; A/D YAW</div>
+</div>
+
+<div id="confirm" hidden>
+  <div class="lbl">CONFIRM TRAINING</div>
+  <pre id="plan">Loading the run plan.</pre>
+  <div class="confirm-row">
+    <label>EPISODES <input id="episodes" type="number" min="1" max="5000" value="200"></label>
+    <label>CHECKPOINT EVERY <input id="every" type="number" min="1" max="500" value="20"></label>
+    <button id="confirmStart" type="button">CONFIRM START</button>
+    <button id="confirmCancel" type="button">CANCEL</button>
+  </div>
+</div>
+
+<div id="dock">
+  <div id="charts">
+    <canvas id="reward" width="280" height="64"></canvas>
+    <canvas id="timeline" width="720" height="64"></canvas>
+  </div>
+  <div id="controls">
+    <div class="group">
+      <button type="button" data-speed="1" class="active">1x</button>
+      <button type="button" data-speed="2">2x</button>
+      <button type="button" data-speed="4">4x</button>
+    </div>
+    <div class="group">
+      <button type="button" id="fly" aria-pressed="false">FLY</button>
+      <button type="button" id="chase" aria-pressed="true">CHASE</button>
+      <button type="button" id="overview" aria-pressed="false">OVERVIEW</button>
+      <button type="button" id="progress" aria-pressed="false">PROGRESS</button>
+      <button type="button" id="compare" aria-pressed="false">COMPARE</button>
+      <button type="button" id="train">TRAIN</button>
+      <button type="button" id="stop" hidden>STOP</button>
+    </div>
+    <div id="compareRead"></div>
+  </div>
+</div>
+
+<script type="module" src="/static/app.js?v=6"></script>
+</body>
+</html>
