@@ -5,3 +5,10 @@ logs/
 checkpoints/
 .pytest_cache/
 *.zip
+archive/
+
+# web app
+web/node_modules/
+web/dist/
+train_stdout.txt
+runs/
