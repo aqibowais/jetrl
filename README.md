@@ -1,112 +1,104 @@
 # JetRL
 
-A simplified jet flies a closed lap of ring gates in 3D. Proximal Policy Optimization learns the lap, and the browser shows that saved run: a chase camera, a cockpit HUD, a reward curve, and a checkpoint timeline. You can also take the stick and fly the track yourself.
+A PPO policy flies a jet through ring gates. One policy trained on a single circuit memorises it and fails on new ones; a second, trained on generated circuits, flies 98% of circuits it has never seen. Both networks run live in the browser on a TypeScript port of the simulator, checked step by step against the Python environment.
 
-## What to look at first
+![Watch mode: the specialist banking toward gate 3, with what it sees and decides on the right](docs/preview.png)
 
-Open the cockpit. The server loads the strongest checkpoint already on disk and flies it in real time. Nothing trains when the page opens.
+[GUIDE.md](GUIDE.md) explains the whole project in depth: the flight model, reward, PPO setup, evaluation protocol, and the questions to expect.
 
-```powershell
-cd "c:\Users\Aqib\Desktop\Ai projects\JetRL"
-.\.venv\Scripts\Activate.ps1
-python server.py
-```
+## Results
 
-Open `http://127.0.0.1:8000`.
+| | Fixed circuit (30 starts) | 50 unseen test circuits |
+| --- | --- | --- |
+| Specialist, episode 10,000 | 100% laps, 27.2 s | 46% laps, 55% of gates |
+| Generalist, episode 5,000 | 100% laps, 33.2 s | **98% laps** (49/50) |
+| Hand-written pilot (`test_env.py`) | 100% laps, 39.3 s | – |
 
-The server does not start training. It loops the saved policy with the highest mean reward, which on this disk is episode 400, at 1x.
+The specialist sees which gate is next as an input, and on one fixed track that number tells it where it is on the lap. It learned the track, not how to fly to a gate. The generalist trains on circuits from `track.random_track()` with that input zeroed. Its checkpoint was chosen on 30 validation circuits (seed 777000) and reported on 50 separate test circuits (seed 888000). The browser port agrees: on 120 browser-generated tracks it laps 118, the specialist 60.
 
-`PROGRESS` walks the checkpoints in order, from the earliest to the latest, and then repeats. `1x`, `2x`, and `4x` only change how fast that playback runs. They do not start a new training job and they do not skip physics steps. Click a mark on the timeline to loop that one checkpoint. `COMPARE` plays two checkpoints back to back. `CHASE` sits behind the jet. `OVERVIEW` shows the whole circuit.
+![Specialist and generalist on the fixed circuit and on unseen circuits](docs/report.png)
 
-Episode 20 dives after the first gate. Episode 400 stays airborne much longer and clears more gates. It still does not finish a reliable full lap. Later checkpoints, through episode 1000, score worse than episode 400, so the page does not default to the last file.
+### Ablation
 
-`FLY` hands you the same jet. `W` and `S` change throttle, the arrow keys pitch and roll, and `A` and `D` yaw. The lap timer starts when you pass gate 1. Your best manual time sits next to the best AI lap time on the same display.
+Each configuration was trained from scratch with the same settings for 4M steps. All of them learned to lap every start, so the comparison is how many steps that took:
 
-## Recorded training run
-
-A 400-episode PPO run is already on disk under `checkpoints/` and `logs/rewards.jsonl`.
-
-| Window | Mean episode reward |
+| Configuration | Steps to 100% laps |
 | --- | --- |
-| First 20 episodes | -34.04 |
-| Last 20 episodes | 11.27 |
+| Stall limit + random-gate starts (seeds 7 / 21 / 33) | 1.45M / 1.31M / 1.37M |
+| No stall limit | 1.12M |
+| No random-gate starts | 1.76M |
 
-Early checkpoints crash after one gate. Later checkpoints often survive the full episode limit and pass two or three gates. That is a real improvement, not a finished racing line. A hand-written pilot in `test_env.py` can complete the lap in about 42 seconds, so the track is solvable. The learned policy has not reached that yet. Longer training is the next step, not a change of algorithm.
+Neither fix is necessary with this flight model. Dropping random-gate starts was slowest, but with one seed that is a hint, not a finding.
 
-`logs/reward_curve.png` is the plot of that run.
+## The site
 
-## Run locally
+`web/` is a static site. Everything on it is computed live from the exported networks, and every reported number comes from Python.
 
-Python 3.12 is what this project was built with. Python 3.10 or newer should work.
+- **Story:** early training, first laps, the specialist, the specialist failing a new circuit, the generalist flying it.
+- **Watch:** any checkpoint on the fixed circuit, with a panel showing the observation, the four actions, the rewards earned and the live network activations.
+- **New track:** generate a circuit and watch both policies fly it, with a running tally.
+- **Evolution:** every checkpoint at once from the same start.
+- **Race:** fly against the policy with a keyboard or gamepad. Assist mode holds a bank angle while you steer and levels out when you let go.
 
-```powershell
-cd "c:\Users\Aqib\Desktop\Ai projects\JetRL"
+![New track: both policies on a circuit generated in the browser](docs/lab.png)
+
+`parity.test.ts` replays a Python-recorded episode: the TypeScript state must match every step to 10⁻⁹ m and the network's actions must match PyTorch to 10⁻⁴.
+
+## Flight model
+
+The jet is a point mass flying along its velocity, at 30 Hz.
+
+- **Stick:** a centred pitch stick holds the flight path, and pulling adds load factor.
+- **Turning:** banking tilts the lift, which turns the jet.
+- **Stall:** the available lift drops with speed, so a slow jet stalls and sinks.
+- **Drag:** hard turns bleed speed.
+- **Attitude:** the nose sits along the velocity plus the angle of attack, so it always looks like it's flying where it's going.
+
+## Run
+
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
+.venv\Scripts\activate           # Windows; source .venv/bin/activate elsewhere
 pip install -r requirements.txt
+python test_env.py               # environment checks and the hand-written pilot
+
+python train.py --yes --episodes 10000 --checkpoint-every 500
+python train.py --yes --timesteps 10000000 --episodes 1000000 --random-tracks 0.8 \
+    --mask-gate-index --run-dir runs/generalist --checkpoint-every 1000
+python eval_unseen.py runs/generalist/checkpoints --mask        # validation
+python eval_unseen.py runs/generalist/checkpoints --only ep_05000 --mask \
+    --track-seed 888000 --tracks 50 --fixed 30 --workers 1 --out runs/generalist/test_ep05000.json
+python eval_unseen.py checkpoints --only ep_10000 --track-seed 888000 --tracks 50 \
+    --workers 1 --out runs/specialist_test.json
+python eval_ablation.py          # needs the runs/abl_* directories
+python export_web.py             # writes web/public/data and the parity fixture
+
+cd web
+npm install
+npm run dev                      # http://127.0.0.1:5174
 ```
 
-The pinned PyTorch build is the CPU wheel. On this machine, `torch==2.14` failed to load its DLL. `torch==2.5.1` from the CPU index is the version in `requirements.txt`. If `pip install -r requirements.txt` pulls a broken torch build, install that CPU wheel explicitly:
+`--dummy` runs the environments in one process, which uses much less memory. Each training run took about an hour on CPU.
 
-```powershell
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-```
+## Deploy
 
-Check the environment, with no window and no training:
+`render.yaml` is a Render Blueprint for a static site: **New → Blueprint**, pick the repo. Render runs `npm ci && npm test && npm run build` in `web/` and serves `web/dist`.
 
-```powershell
-python test_env.py
-```
-
-That runs a random policy, then checks that a crash ends the episode, that flying through the wrong ring does not count, and that passing every gate in order ends the episode on a completed lap.
-
-## Train
-
-Training stays stopped until you confirm it. `python train.py` prints the plan and waits for `y`. Closing the prompt or typing anything else cancels the run.
-
-```powershell
-python train.py --episodes 400 --checkpoint-every 20
-```
-
-The cockpit has the same gate. `TRAIN` only opens the plan. Nothing starts until `CONFIRM START`.
-
-Checkpoints land in `checkpoints/` every N episodes, with the episode number, mean reward, and timestamp beside the weights. Episode rewards append to `logs/rewards.jsonl`. Plot them with:
-
-```powershell
-python plot_rewards.py
-```
-
-One training process at a time. A second `train.py` or a second confirm from the page is refused while the first is alive.
-
-## Method
-
-The aircraft is a small rigid body, not an aerodynamic simulation. Throttle produces thrust along the nose. Lift depends on speed and angle of attack, and it tilts when the jet banks. Gravity, drag, and a little ground effect near the surface are the other forces. Banking also yaws the nose, so a roll becomes a turn. The step rate is 30 Hz.
-
-The track is a stadium of nine rings. Altitude and heading change around the lap. A gate counts only if the jet crosses that ring in order, from behind, and inside the ring. Missing it or clipping a later ring does nothing.
-
-The reward is dense on purpose. Closing on the next gate pays a little every step. A centered pass pays more than a pass near the rim. Hitting the ground or leaving the airspace around the track pays a large penalty and ends the episode. Finishing all nine gates pays a bonus that grows when the lap is faster.
-
-The policy is Stable-Baselines3 PPO, a two-layer network of width 128, on CPU. Observations are in the aircraft frame: where the next two gates are, body velocity, which way is down, and the current rates. Actions are throttle, pitch, roll, and yaw, each in `[-1, 1]`.
-
-The page plays a saved checkpoint. It does not run the optimizer. `1x` is real time. `2x` and `4x` send the same physics steps faster. They do not drop steps, so the path stays the path that checkpoint actually flew. `PROGRESS` only changes which saved file is loaded next.
-
-## Layout
+## Code
 
 ```text
-jet_env.py             Gymnasium environment and the flight model
-track.py               Gate positions and the centerline
-test_env.py            Random policy, crash, and lap checks
-train.py               PPO, confirmation prompt, checkpoints, reward log
-plot_rewards.py        Reward curve from the log
-compare_checkpoints.py Early versus late checkpoint rollouts
-server.py              FastAPI, WebSocket stream, replay, manual flight
-test_ws.py             Small client that checks the stream and the confirm gate
-static/                Three.js scene, HUD, reward chart, timeline
-checkpoints/           Saved policies (created by training)
-logs/                  Reward log and the reward plot
+jet_env.py          Gymnasium environment: flight model, gates, reward
+track.py            Fixed circuit and random circuit generator
+train.py            PPO training and checkpoints
+eval_unseen.py      Validation and test evaluation on generated circuits
+eval_ablation.py    Ablation table
+export_web.py       Evaluation and data export for the site
+web/src/sim/        TypeScript simulator, policy, track generator, parity test
+web/src/scene/      three.js airfield, jet, gates, cameras
+web/src/hud/        Head-up display
+web/src/ui/         Side panel, minimap, charts
 ```
 
-## Scope
+## Limits
 
-This is a toy aircraft in a browser, not a flight simulator and not a hardware controller. The learned policy in the saved 400-episode run survives longer and scores higher than the early policy. It does not yet fly a clean lap. Treat that gap as the result of this run, not as a claim that PPO cannot learn the track.
+The flight model is a point mass, not a 6-DOF aircraft. Ablation configurations other than the full setup have one seed each, and the generalist was trained once.

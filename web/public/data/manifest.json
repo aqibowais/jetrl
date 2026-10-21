@@ -1,0 +1,334 @@
+{
+  "best": "ep_10000",
+  "eval_seeds": 30,
+  "checkpoints": [
+    {
+      "id": "ep_00500",
+      "episode": 500,
+      "timesteps": 268416,
+      "train_mean_reward": -11.0473,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 0.0,
+        "best_lap": null,
+        "mean_lap": null,
+        "mean_gates": 2.533333333333333,
+        "mean_reward": -8.300324377637638,
+        "mean_airtime": 22.073333333333586,
+        "outcomes": {
+          "crash_bounds": 28,
+          "stalled": 2
+        }
+      }
+    },
+    {
+      "id": "ep_01500",
+      "episode": 1500,
+      "timesteps": 1040560,
+      "train_mean_reward": 78.4868,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 0.8666666666666667,
+        "best_lap": 42.80000000000005,
+        "mean_lap": 42.958974358974395,
+        "mean_gates": 8.233333333333333,
+        "mean_reward": 191.79075680362897,
+        "mean_airtime": 42.9577777777779,
+        "outcomes": {
+          "lap_complete": 26,
+          "stalled": 4
+        }
+      }
+    },
+    {
+      "id": "ep_02000",
+      "episode": 2000,
+      "timesteps": 1448848,
+      "train_mean_reward": 195.922,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 34.566666666667174,
+        "mean_lap": 34.84666666666716,
+        "mean_gates": 9.0,
+        "mean_reward": 248.0884000825814,
+        "mean_airtime": 36.366666666667165,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_03000",
+      "episode": 3000,
+      "timesteps": 2100064,
+      "train_mean_reward": 211.9097,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.533333333333932,
+        "mean_lap": 27.627777777778377,
+        "mean_gates": 9.0,
+        "mean_reward": 275.4659147827559,
+        "mean_airtime": 29.097777777778383,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_04000",
+      "episode": 4000,
+      "timesteps": 2749008,
+      "train_mean_reward": 195.6607,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.36666666666725,
+        "mean_lap": 27.420000000000588,
+        "mean_gates": 9.0,
+        "mean_reward": 275.0831971569416,
+        "mean_airtime": 28.873333333333928,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_05000",
+      "episode": 5000,
+      "timesteps": 3417904,
+      "train_mean_reward": 186.4754,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.966666666667283,
+        "mean_lap": 28.020000000000618,
+        "mean_gates": 9.0,
+        "mean_reward": 259.082382051097,
+        "mean_airtime": 29.471111111111735,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_05500",
+      "episode": 5500,
+      "timesteps": 3752704,
+      "train_mean_reward": 200.7234,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.600000000000605,
+        "mean_lap": 27.69444444444505,
+        "mean_gates": 9.0,
+        "mean_reward": 272.7280673707233,
+        "mean_airtime": 29.15000000000061,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_06500",
+      "episode": 6500,
+      "timesteps": 4420656,
+      "train_mean_reward": 191.2764,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.400000000000595,
+        "mean_lap": 27.513333333333932,
+        "mean_gates": 9.0,
+        "mean_reward": 268.956151786606,
+        "mean_airtime": 28.97333333333393,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_07500",
+      "episode": 7500,
+      "timesteps": 5076288,
+      "train_mean_reward": 220.7462,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.800000000000615,
+        "mean_lap": 27.88333333333395,
+        "mean_gates": 9.0,
+        "mean_reward": 270.6255933299788,
+        "mean_airtime": 29.33444444444506,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_08500",
+      "episode": 8500,
+      "timesteps": 5775056,
+      "train_mean_reward": 179.6357,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 28.800000000000658,
+        "mean_lap": 28.867777777778443,
+        "mean_gates": 9.0,
+        "mean_reward": 274.99137751349133,
+        "mean_airtime": 30.32444444444511,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_09000",
+      "episode": 9000,
+      "timesteps": 6114064,
+      "train_mean_reward": 222.6208,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.366666666667257,
+        "mean_lap": 27.43000000000059,
+        "mean_gates": 9.0,
+        "mean_reward": 276.10249685897503,
+        "mean_airtime": 28.867777777778375,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    },
+    {
+      "id": "ep_10000",
+      "episode": 10000,
+      "timesteps": 6781136,
+      "train_mean_reward": 235.3859,
+      "eval": {
+        "episodes": 30,
+        "lap_rate": 1.0,
+        "best_lap": 27.10000000000058,
+        "mean_lap": 27.170000000000577,
+        "mean_gates": 9.0,
+        "mean_reward": 283.8902821281159,
+        "mean_airtime": 28.630000000000578,
+        "outcomes": {
+          "lap_complete": 30
+        }
+      }
+    }
+  ],
+  "story_seed": 2,
+  "heuristic": {
+    "episodes": 30,
+    "lap_rate": 1.0,
+    "best_lap": 38.86666666666694,
+    "mean_lap": 39.31777777777803,
+    "mean_gates": 9.0,
+    "mean_reward": 250.5296861244158,
+    "mean_airtime": 40.75222222222247,
+    "outcomes": {
+      "lap_complete": 30
+    }
+  },
+  "generalist": {
+    "id": "gen_05000",
+    "episode": 5000,
+    "timesteps": 3832336,
+    "fixed": {
+      "tracks": 30,
+      "lap_rate": 1.0,
+      "mean_lap": 33.220000000000596,
+      "gate_share": 1.0,
+      "outcomes": {
+        "lap_complete": 30
+      },
+      "episodes": 30,
+      "mean_gates": 9.0,
+      "best_lap": null,
+      "mean_reward": null,
+      "mean_airtime": null
+    },
+    "unseen": {
+      "tracks": 50,
+      "lap_rate": 0.98,
+      "mean_lap": 32.332653061225045,
+      "gate_share": 0.9914285714285714,
+      "outcomes": {
+        "lap_complete": 49,
+        "stalled": 1
+      }
+    }
+  },
+  "specialist_unseen": {
+    "tracks": 50,
+    "lap_rate": 0.46,
+    "mean_lap": 28.397101449275915,
+    "gate_share": 0.5456212121212122,
+    "outcomes": {
+      "crash_ground": 27,
+      "lap_complete": 23
+    }
+  },
+  "ablation": [
+    {
+      "id": "full",
+      "label": "Stall limit + random-gate starts",
+      "detail": "the specialist's setup",
+      "runs": [
+        {
+          "seed": 7,
+          "timesteps": 1448848,
+          "lap_rate": 1.0,
+          "mean_lap": 34.84666666666716,
+          "gate_share": 1.0
+        },
+        {
+          "seed": 21,
+          "timesteps": 1310464,
+          "lap_rate": 1.0,
+          "mean_lap": 38.54000000000029,
+          "gate_share": 1.0
+        },
+        {
+          "seed": 33,
+          "timesteps": 1367984,
+          "lap_rate": 1.0,
+          "mean_lap": 29.700000000000713,
+          "gate_share": 1.0
+        }
+      ]
+    },
+    {
+      "id": "nostall",
+      "label": "No stall limit",
+      "detail": "no penalty for 20 s without a gate",
+      "runs": [
+        {
+          "seed": 7,
+          "timesteps": 1120368,
+          "lap_rate": 1.0,
+          "mean_lap": 38.10333333333365,
+          "gate_share": 1.0
+        }
+      ]
+    },
+    {
+      "id": "nostart",
+      "label": "No random-gate starts",
+      "detail": "every episode starts at the start line",
+      "runs": [
+        {
+          "seed": 7,
+          "timesteps": 1756016,
+          "lap_rate": 1.0,
+          "mean_lap": 37.12222222222259,
+          "gate_share": 1.0
+        }
+      ]
+    }
+  ]
+}

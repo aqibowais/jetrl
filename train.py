@@ -15,16 +15,17 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 
-from jet_env import MAX_STEPS, JetEnv
+from jet_env import GATE_TIMEOUT, MAX_STEPS, JetEnv
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_LOG = ROOT / "logs" / "rewards.jsonl"
 DEFAULT_CHECKPOINTS = ROOT / "checkpoints"
 LOCK_PATH = ROOT / "logs" / "training.lock"
 
-POLICY_KWARGS = {"net_arch": [128, 128], "log_std_init": -1.8}
+RANDOM_START = 0.5
+POLICY_KWARGS = {"net_arch": [128, 128], "log_std_init": -1.0}
 
 
 def _pid_alive(pid: int) -> bool:
@@ -70,36 +71,55 @@ def release_training_lock() -> None:
         LOCK_PATH.unlink(missing_ok=True)
 
 
-def make_ppo(vec_env) -> PPO:
+def make_ppo(vec_env, seed: int | None = None) -> PPO:
+    # 16 envs x 512 steps = 8192 transitions per update. The earlier 4 x 256
+    # rollout was too short to see a gate-to-gate credit assignment.
     return PPO(
         "MlpPolicy",
         vec_env,
         learning_rate=3e-4,
-        n_steps=256,
-        batch_size=256,
+        n_steps=512,
+        batch_size=1024,
         n_epochs=10,
         gamma=0.995,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.01,
+        ent_coef=0.0,
         vf_coef=0.5,
         max_grad_norm=0.5,
         policy_kwargs=POLICY_KWARGS,
         device="cpu",
+        seed=seed,
         verbose=0,
     )
 
 
-def make_vec_env(n_envs: int, seed: int) -> DummyVecEnv:
+def load_ppo(path: Path, vec_env) -> PPO:
+    """Continue an earlier run. A fresh PPO here would throw the training away."""
+    return PPO.load(str(path), env=vec_env, device="cpu")
+
+
+def make_vec_env(
+    n_envs: int,
+    seed: int,
+    subproc: bool = False,
+    random_tracks: float = 0.0,
+    random_start: float = RANDOM_START,
+    gate_timeout: float = GATE_TIMEOUT,
+    mask_gate_index: bool = False,
+) -> VecEnv:
     def factory(index):
         def _init():
-            env = Monitor(JetEnv())
+            env = Monitor(JetEnv(random_start=random_start, random_tracks=random_tracks, gate_timeout=gate_timeout, mask_gate_index=mask_gate_index))
             env.reset(seed=seed + index)
             return env
 
         return _init
 
-    return DummyVecEnv([factory(i) for i in range(n_envs)])
+    factories = [factory(i) for i in range(n_envs)]
+    if subproc and n_envs > 1:
+        return SubprocVecEnv(factories, start_method="spawn")
+    return DummyVecEnv(factories)
 
 
 def _last_logged_episode(path: Path) -> int:
@@ -277,6 +297,13 @@ def run_training(
     on_episode=None,
     stop_event=None,
     callback_holder=None,
+    resume: Path | None = None,
+    subproc: bool = False,
+    random_tracks: float = 0.0,
+    random_start: float = RANDOM_START,
+    gate_timeout: float = GATE_TIMEOUT,
+    mask_gate_index: bool = False,
+    max_timesteps: int | None = None,
 ) -> TrainingLogCallback:
     if not confirmed:
         raise RuntimeError(
@@ -294,6 +321,13 @@ def run_training(
             on_episode,
             stop_event,
             callback_holder,
+            resume,
+            subproc,
+            random_tracks,
+            random_start,
+            gate_timeout,
+            mask_gate_index,
+            max_timesteps,
         )
     finally:
         release_training_lock()
@@ -309,12 +343,22 @@ def _run_training(
     on_episode,
     stop_event,
     callback_holder,
+    resume=None,
+    subproc=False,
+    random_tracks=0.0,
+    random_start=RANDOM_START,
+    gate_timeout=GATE_TIMEOUT,
+    mask_gate_index=False,
+    max_timesteps=None,
 ) -> TrainingLogCallback:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     start_episode = _last_logged_episode(log_path) + 1
-    vec = make_vec_env(n_envs, seed)
-    model = make_ppo(vec)
+    vec = make_vec_env(
+        n_envs, seed, subproc=subproc, random_tracks=random_tracks, random_start=random_start,
+        gate_timeout=gate_timeout, mask_gate_index=mask_gate_index,
+    )
+    model = load_ppo(resume, vec) if resume else make_ppo(vec, seed=seed)
     callback = TrainingLogCallback(
         total_episodes=episodes,
         checkpoint_every=checkpoint_every,
@@ -327,7 +371,12 @@ def _run_training(
     if callback_holder is not None:
         callback_holder.append(callback)
     # Upper bound. The callback stops the run after the requested number of episodes.
-    model.learn(total_timesteps=episodes * MAX_STEPS, callback=callback, progress_bar=False)
+    model.learn(
+        total_timesteps=max_timesteps or episodes * MAX_STEPS,
+        callback=callback,
+        progress_bar=False,
+        reset_num_timesteps=resume is None,
+    )
     vec.close()
     return callback
 
@@ -336,8 +385,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train a PPO policy to fly the JetRL lap.")
     parser.add_argument("--episodes", type=int, default=400)
     parser.add_argument("--checkpoint-every", type=int, default=25)
-    parser.add_argument("--envs", type=int, default=4)
+    parser.add_argument("--envs", type=int, default=16)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--resume", type=Path, default=None, help="checkpoint .zip to continue from")
+    parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    parser.add_argument("--random-tracks", type=float, default=0.0, help="share of episodes on a procedural circuit")
+    parser.add_argument("--random-start", type=float, default=RANDOM_START, help="share of episodes starting before a random gate")
+    parser.add_argument("--stall-timeout", type=float, default=None, help="override GATE_TIMEOUT (ablation); 0 disables")
+    parser.add_argument("--run-dir", type=Path, default=None, help="write checkpoints/ and rewards.jsonl here instead")
+    parser.add_argument("--mask-gate-index", action="store_true", help="hide the gate index from the policy (generalist)")
+    parser.add_argument("--timesteps", type=int, default=None, help="stop after this many env steps")
+    parser.add_argument("--dummy", action="store_true", help="run the envs in-process (less memory, same algorithm)")
     return parser
 
 
@@ -346,11 +404,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.episodes < 1 or args.checkpoint_every < 1 or args.envs < 1:
         print("episodes, checkpoint interval, and env count must be positive.")
         return 2
+    gate_timeout = GATE_TIMEOUT
+    if args.stall_timeout is not None:
+        gate_timeout = args.stall_timeout if args.stall_timeout > 0 else 1e9
+    log_path, checkpoint_dir = DEFAULT_LOG, DEFAULT_CHECKPOINTS
+    if args.run_dir is not None:
+        log_path, checkpoint_dir = args.run_dir / "rewards.jsonl", args.run_dir / "checkpoints"
+        global LOCK_PATH
+        LOCK_PATH = args.run_dir / "training.lock"
     seconds, raw = estimate_duration(args.episodes, args.envs)
     print(describe_plan(args.episodes, args.checkpoint_every, args.envs, seconds))
     print(f"  raw env throughput on this machine: {raw:,.0f} steps/s (physics only, not PPO)")
+    if args.resume is not None:
+        if not args.resume.exists():
+            print(f"resume checkpoint not found: {args.resume}")
+            return 2
+        print(f"  resuming from: {args.resume}")
     try:
-        answer = input("Proceed? [y/N]: ").strip().lower()
+        answer = "y" if args.yes else input("Proceed? [y/N]: ").strip().lower()
     except EOFError:
         answer = ""
     if answer != "y":
@@ -363,9 +434,16 @@ def main(argv: list[str] | None = None) -> int:
             checkpoint_every=args.checkpoint_every,
             n_envs=args.envs,
             seed=args.seed,
-            log_path=DEFAULT_LOG,
-            checkpoint_dir=DEFAULT_CHECKPOINTS,
+            log_path=log_path,
+            checkpoint_dir=checkpoint_dir,
             confirmed=True,
+            resume=args.resume,
+            subproc=args.envs > 1 and not args.dummy,
+            random_tracks=args.random_tracks,
+            random_start=args.random_start,
+            gate_timeout=gate_timeout,
+            mask_gate_index=args.mask_gate_index,
+            max_timesteps=args.timesteps,
         )
     except RuntimeError as exc:
         print(exc)

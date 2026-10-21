@@ -1,13 +1,11 @@
-"""Simplified jet lap environment.
+"""Jet gate-racing environment.
 
-This is a rigid-body toy model: thrust, lift from speed and angle of attack,
-gravity, and drag. It is meant to be responsive and learnable, not a CFD model.
-Controls are rate commands in [-1, 1]:
+Point-mass flight-path model with a fly-by-wire pitch law: a centered stick
+holds the flight path, pulling adds load factor, and the load factor
+available is limited by speed, so a slow jet stalls and sinks. The nose sits
+along the velocity vector plus the angle of attack the load factor needs.
 
-    0 throttle up/down
-    1 pitch up/down
-    2 roll right/left
-    3 yaw right/left
+Actions in [-1, 1]: throttle rate, pitch (load factor), roll rate, rudder.
 """
 
 from __future__ import annotations
@@ -16,23 +14,29 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from track import MAX_TRACK_DISTANCE, N_GATES, build_track, distance_to_centerline
+from track import MAX_TRACK_DISTANCE, build_track, distance_to_centerline, random_track
 
 SIM_HZ = 30
 DT = 1.0 / SIM_HZ
 MAX_STEPS = 3000  # 100 seconds
 
-MASS = 1.0
 GRAVITY = 9.81
 CRUISE_SPEED = 42.0
 THRUST_MAX = 18.0
 DRAG_K = 0.0042
-INDUCED_K = 0.0016
-LIFT_K = GRAVITY / (CRUISE_SPEED ** 2)
-MAX_PITCH_RATE = 1.15
-MAX_ROLL_RATE = 2.1
-MAX_YAW_RATE = 0.85
+INDUCED_K = 1.2          # induced drag at 1 g and cruise speed, m/s^2
+AOA_1G = 0.06            # angle of attack for 1 g at cruise speed, rad
+AOA_MAX = 0.32           # stall angle; caps load factor at (v / 17 m/s)^2
+N_MAX = 6.0
+N_MIN = -1.5
+PULL_G = 3.5             # extra load factor at full back stick
+PUSH_G = 1.5
+MAX_ROLL_RATE = 2.2
+MAX_RUDDER_RATE = 0.25
+MAX_BANK = 1.35
+MAX_GAMMA = 1.2
 RATE_TAU = 0.12
+MIN_SPEED = 8.0
 MAX_SPEED = 85.0
 GROUND_Y = 1.5
 CEILING_Y = 280.0
@@ -42,6 +46,11 @@ LAP_BONUS = 50.0
 PAR_TIME = 52.0
 CRASH_PENALTY = 40.0
 STEP_PENALTY = 0.002
+# Ending the episode when no gate is cleared for this long removes the
+# "circle safely until timeout" optimum the first runs converged to.
+GATE_TIMEOUT = 20.0
+STALL_PENALTY = 20.0
+START_BACKOFF = 70.0
 
 OBS_DIM = 22
 
@@ -63,6 +72,16 @@ def body_axes(yaw: float, pitch: float, roll: float):
     return forward, right, up
 
 
+def attitude(forward: np.ndarray, right: np.ndarray):
+    """Yaw, pitch and roll (as used by body_axes) of a body frame."""
+    yaw = float(np.arctan2(forward[0], forward[2]))
+    pitch = float(np.arcsin(np.clip(forward[1], -1.0, 1.0)))
+    right0 = np.array([np.cos(yaw), 0.0, -np.sin(yaw)])
+    up0 = np.cross(forward, right0)
+    roll = float(np.arctan2(-np.dot(right, up0), np.dot(right, right0)))
+    return yaw, pitch, roll
+
+
 def _lag(current: float, target: float, dt: float, tau: float) -> float:
     alpha = 1.0 - np.exp(-dt / tau)
     return float(current + (target - current) * alpha)
@@ -71,13 +90,28 @@ def _lag(current: float, target: float, dt: float, tau: float) -> float:
 class JetEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self):
+    def __init__(
+        self,
+        random_start: float = 0.0,
+        random_tracks: float = 0.0,
+        gate_timeout: float = GATE_TIMEOUT,
+        mask_gate_index: bool = False,
+    ):
+        """random_start: probability that reset() places the jet before a random gate.
+        random_tracks: probability that reset() generates a new procedural circuit.
+
+        Both are for training. Evaluation passes options={"track": ...} or uses
+        the fixed circuit, and always starts at the start line.
+        """
         super().__init__()
-        self.track = build_track()
-        self.gate_centers = self.track["centers"]
-        self.gate_normals = self.track["normals"]
-        self.gate_radius = float(self.track["radius"])
-        self.n_gates = N_GATES
+        self.random_start = float(random_start)
+        self.random_tracks = float(random_tracks)
+        self.gate_timeout = float(gate_timeout)
+        # On one fixed circuit the gate index tells the policy where it is, which
+        # invites memorizing the track. Generalist policies see 0 here instead.
+        self.mask_gate_index = bool(mask_gate_index)
+        self.fixed_track = build_track()
+        self._set_track(self.fixed_track)
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
         self.observation_space = spaces.Box(
             low=-10.0, high=10.0, shape=(OBS_DIM,), dtype=np.float32
@@ -85,9 +119,21 @@ class JetEnv(gym.Env):
         self.max_steps = MAX_STEPS
         self._allocate()
 
+    def _set_track(self, track: dict) -> None:
+        self.track = track
+        self.gate_centers = track["centers"]
+        self.gate_normals = track["normals"]
+        self.gate_radius = float(track["radius"])
+        self.n_gates = len(track["centers"])
+
     def _allocate(self):
         self.position = np.zeros(3, dtype=np.float64)
         self.velocity = np.zeros(3, dtype=np.float64)
+        self.heading = 0.0
+        self.gamma = 0.0
+        self.bank = 0.0
+        self.pull = 0.0
+        self.rudder = 0.0
         self.pitch = 0.0
         self.roll = 0.0
         self.yaw = 0.0
@@ -108,24 +154,53 @@ class JetEnv(gym.Env):
         self.lap_running = False
         self.episode_reward = 0.0
         self.track_dist = 0.0
+        self.last_progress = 0.0
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self._allocate()
         rng = self.np_random
+        if options and options.get("track") is not None:
+            self._set_track(options["track"])
+        elif self.random_tracks > 0 and rng.uniform() < self.random_tracks:
+            self._set_track(random_track(rng))
+        else:
+            self._set_track(self.fixed_track)
+        self._allocate()
         self.position = self.track["start_position"] + rng.uniform(-6.0, 6.0, size=3)
         self.position[1] = float(np.clip(self.position[1], 28.0, 120.0))
-        self.yaw = wrap_angle(self.track["start_yaw"] + float(rng.uniform(-0.06, 0.06)))
-        self.pitch = float(self.track["start_pitch"] + rng.uniform(-0.04, 0.04))
-        self.roll = float(rng.uniform(-0.04, 0.04))
-        forward, right, up = body_axes(self.yaw, self.pitch, self.roll)
-        launch = CRUISE_SPEED + float(rng.uniform(-2.0, 2.0))
-        self.velocity = forward * launch + rng.uniform(-1.5, 1.5, size=3)
+        self.heading = wrap_angle(self.track["start_yaw"] + float(rng.uniform(-0.06, 0.06)))
+        self.gamma = float(self.track["start_pitch"] + rng.uniform(-0.04, 0.04))
+        self.bank = float(rng.uniform(-0.04, 0.04))
+        self.speed = CRUISE_SPEED + float(rng.uniform(-2.0, 2.0))
         self.throttle = float(np.clip(0.48 + rng.uniform(-0.05, 0.05), 0.0, 1.0))
-        self.speed = float(np.linalg.norm(self.velocity))
+        start_gate = None if options is None else options.get("start_gate")
+        if start_gate is None and self.random_start > 0 and rng.uniform() < self.random_start:
+            start_gate = int(rng.integers(1, self.n_gates))
+        if start_gate:
+            self._place_before_gate(int(start_gate), rng)
+        self._update_frame(1.0)
         self.prev_dist = self._gate_distance()
         self.track_dist = distance_to_centerline(self.position, self.track["centerline"])
         return self._observation(), self._info(passed_gate=None, reason="")
+
+    def _place_before_gate(self, gate: int, rng) -> None:
+        """Start on the approach to `gate`, with the earlier gates already credited.
+
+        The lap clock is backdated by the par share of the skipped gates, so the
+        lap bonus on these episodes stays on the same scale as a full lap.
+        """
+        center = self.gate_centers[gate]
+        normal = self.gate_normals[gate]
+        self.position = center - normal * START_BACKOFF + rng.uniform(-5.0, 5.0, size=3)
+        self.heading = wrap_angle(float(np.arctan2(normal[0], normal[2])) + float(rng.uniform(-0.05, 0.05)))
+        self.gamma = float(np.arcsin(np.clip(normal[1], -0.5, 0.5)))
+        self.bank = 0.0
+        self.speed = CRUISE_SPEED + float(rng.uniform(-2.0, 2.0))
+        self.cleared[:gate] = True
+        self.next_gate = gate
+        self.lap_running = True
+        self.lap_start = -PAR_TIME * gate / self.n_gates
+        self.lap_time = self.time - self.lap_start
 
     def step(self, action):
         action = np.clip(np.asarray(action, dtype=np.float64).reshape(-1)[:4], -1.0, 1.0)
@@ -135,55 +210,36 @@ class JetEnv(gym.Env):
         self.time += DT
 
         self.throttle = float(np.clip(self.throttle + action[0] * 0.55 * DT, 0.0, 1.0))
-        self.pitch_rate = _lag(self.pitch_rate, action[1] * MAX_PITCH_RATE, DT, RATE_TAU)
-        self.roll_rate = _lag(self.roll_rate, action[2] * MAX_ROLL_RATE, DT, RATE_TAU)
-        self.yaw_rate = _lag(self.yaw_rate, action[3] * MAX_YAW_RATE, DT, RATE_TAU)
+        self.pull = _lag(self.pull, float(action[1]), DT, RATE_TAU)
+        self.roll_rate = _lag(self.roll_rate, float(action[2]) * MAX_ROLL_RATE, DT, RATE_TAU)
+        self.rudder = _lag(self.rudder, float(action[3]) * MAX_RUDDER_RATE, DT, RATE_TAU)
 
-        # Mild static stability so stick noise does not immediately tumble the nose.
-        self.pitch = float(np.clip(self.pitch + (self.pitch_rate - 0.45 * self.aoa) * DT, -1.05, 1.05))
-        self.roll = float(np.clip(self.roll + self.roll_rate * DT, -1.15, 1.15))
-        coord_yaw = 0.0
-        if self.speed > 12.0:
-            bank = float(np.clip(self.roll, -1.05, 1.05))
-            coord_yaw = GRAVITY * np.tan(bank) / max(self.speed, 12.0)
-        self.yaw = wrap_angle(self.yaw + (self.yaw_rate + coord_yaw) * DT)
+        old_bank = self.bank
+        self.bank = float(np.clip(self.bank + self.roll_rate * DT, -MAX_BANK, MAX_BANK))
+        self.roll_rate = (self.bank - old_bank) / DT
 
-        forward, right, up = body_axes(self.yaw, self.pitch, self.roll)
-        self.speed = float(np.linalg.norm(self.velocity))
-        if self.speed > 2.0:
-            v_hat = self.velocity / self.speed
-            v_fwd = float(np.dot(self.velocity, forward))
-            v_up = float(np.dot(self.velocity, up))
-            self.aoa = float(np.clip(np.arctan2(-v_up, max(v_fwd, 1.0)), -0.7, 0.7))
-        else:
-            v_hat = forward
-            self.aoa = float(self.pitch)
+        v = max(self.speed, MIN_SPEED)
+        q = (v / CRUISE_SPEED) ** 2
+        n_avail = min(AOA_MAX / AOA_1G * q, N_MAX)
+        trim = np.cos(self.gamma) / np.cos(self.bank)
+        n = float(np.clip(trim + self.pull * (PULL_G if self.pull > 0 else PUSH_G), N_MIN, n_avail))
 
-        cl = 1.0 + 3.6 * self.aoa
-        if self.aoa > 0.42:
-            cl *= 0.45
-        cl = float(np.clip(cl, -0.2, 2.3))
+        gamma_dot = GRAVITY / v * (n * np.cos(self.bank) - np.cos(self.gamma))
+        heading_dot = GRAVITY / v * n * np.sin(self.bank) / np.cos(self.gamma) + self.rudder
+        old_gamma = self.gamma
+        self.gamma = float(np.clip(self.gamma + gamma_dot * DT, -MAX_GAMMA, MAX_GAMMA))
+        self.pitch_rate = (self.gamma - old_gamma) / DT
+        self.yaw_rate = float(heading_dot)
+        self.heading = wrap_angle(self.heading + heading_dot * DT)
 
-        lift_mag = LIFT_K * (self.speed ** 2) * cl
-        lift = up * lift_mag
-        thrust = forward * (self.throttle * THRUST_MAX)
-        drag_mag = (DRAG_K + INDUCED_K * cl * cl) * (self.speed ** 2)
-        drag = -v_hat * drag_mag
-        gravity = np.array([0.0, -GRAVITY, 0.0])
-        accel = (thrust + lift + drag) / MASS + gravity
-        # Ground effect. A hard dive still reaches the surface and ends the episode.
-        if self.position[1] < 28.0:
-            accel[1] += (28.0 - self.position[1]) / 28.0 * 6.5
-
-        self.velocity = self.velocity + accel * DT
-        self.speed = float(np.linalg.norm(self.velocity))
-        if self.speed > MAX_SPEED:
-            self.velocity *= MAX_SPEED / self.speed
-            self.speed = MAX_SPEED
+        drag = DRAG_K * v * v + INDUCED_K * n * n / q
+        accel = self.throttle * THRUST_MAX - drag - GRAVITY * np.sin(self.gamma)
+        self.speed = float(np.clip(self.speed + accel * DT, MIN_SPEED, MAX_SPEED))
+        self.g_force = n
+        self._update_frame(q)
 
         previous = self.position.copy()
         self.position = self.position + self.velocity * DT
-        self.g_force = float(np.linalg.norm(lift) / GRAVITY)
         self.track_dist = distance_to_centerline(self.position, self.track["centerline"])
 
         reward = -STEP_PENALTY
@@ -224,6 +280,10 @@ class JetEnv(gym.Env):
                 reward += LAP_BONUS * multiplier
                 terminated = True
                 reason = "lap_complete"
+            elif self.time - self.last_progress > self.gate_timeout:
+                reward -= STALL_PENALTY
+                terminated = True
+                reason = "stalled"
             elif self.steps >= self.max_steps:
                 truncated = True
                 reason = "timeout"
@@ -231,6 +291,22 @@ class JetEnv(gym.Env):
         self.episode_reward += float(reward)
         info = self._info(passed_gate=passed_index, reason=reason)
         return self._observation(), float(reward), terminated, truncated, info
+
+    def set_velocity(self, velocity) -> None:
+        velocity = np.asarray(velocity, dtype=np.float64)
+        self.speed = float(np.clip(np.linalg.norm(velocity), MIN_SPEED, MAX_SPEED))
+        self.heading = float(np.arctan2(velocity[0], velocity[2]))
+        self.gamma = float(np.clip(np.arcsin(velocity[1] / max(np.linalg.norm(velocity), 1e-6)), -MAX_GAMMA, MAX_GAMMA))
+        self._update_frame((self.speed / CRUISE_SPEED) ** 2)
+
+    def _update_frame(self, q: float) -> None:
+        """Velocity from the flight path; body attitude adds the angle of attack."""
+        path, right, lift_dir = body_axes(self.heading, self.gamma, self.bank)
+        self.velocity = path * self.speed
+        self.aoa = float(np.clip(self.g_force * AOA_1G / max(q, 1e-3), -0.15, AOA_MAX))
+        ca, sa = np.cos(self.aoa), np.sin(self.aoa)
+        forward = path * ca + lift_dir * sa
+        self.yaw, self.pitch, self.roll = attitude(forward, right)
 
     def _gate_distance(self) -> float:
         return float(np.linalg.norm(self.gate_centers[self.next_gate] - self.position))
@@ -259,6 +335,7 @@ class JetEnv(gym.Env):
 
     def _advance_gate(self, index: int):
         self.cleared[index] = True
+        self.last_progress = self.time
         if index == 0 and not self.lap_running:
             self.lap_running = True
             self.lap_start = self.time
@@ -306,7 +383,7 @@ class JetEnv(gym.Env):
                 self.position[1] / 120.0,
                 self.speed / 70.0,
                 np.clip(self.aoa, -1.0, 1.0),
-                self.next_gate / self.n_gates,
+                0.0 if self.mask_gate_index else self.next_gate / self.n_gates,
                 dist / 300.0,
                 self.g_force / 4.0,
             ],

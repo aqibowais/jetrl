@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JetRL</title>
+<meta name="description" content="A PPO policy that flies a jet through ring gates, including on circuits it never trained on. The network runs in the browser.">
+<meta name="theme-color" content="#07090c">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2307090c'/%3E%3Cpath d='M16 5 L27 24 L16 20 L5 24 Z' fill='%23ffb000'/%3E%3C/svg%3E">
+</head>
+<body data-mode="story">
+<div id="deck">
+  <header class="bar">
+    <div class="brand">
+      <span class="word">JetRL</span>
+    </div>
+    <nav class="modes" role="tablist" aria-label="Mode">
+      <button role="tab" data-mode="story" aria-selected="true">Story</button>
+      <button role="tab" data-mode="watch" aria-selected="false">Watch</button>
+      <button role="tab" data-mode="lab" aria-selected="false">New track</button>
+      <button role="tab" data-mode="evolve" aria-selected="false">Evolution</button>
+      <button role="tab" data-mode="race" aria-selected="false">Race</button>
+    </nav>
+    <button type="button" class="chip" id="panelToggle" title="Show or hide the side panel">Panel</button>
+    <a class="jump" href="#report">Results</a>
+  </header>
+
+  <main class="stage">
+    <canvas id="view" aria-label="3D view of the jets and the gate track"></canvas>
+    <canvas id="hud" aria-hidden="true"></canvas>
+
+    <div class="overlay tl">
+      <div class="who" id="who"><i></i><span>--</span></div>
+      <div class="readout"><span class="k">Gate</span><span class="v" id="gateRead">--</span></div>
+      <div class="readout"><span class="k">Lap</span><span class="v" id="lapRead">--.--</span></div>
+      <div class="readout"><span class="k">Return</span><span class="v" id="retRead">0.0</span></div>
+    </div>
+
+    <div class="overlay tr controls">
+      <div class="seg" role="group" aria-label="Camera">
+        <button data-cam="chase" class="on">Chase</button>
+        <button data-cam="tv">Trackside</button>
+        <button data-cam="cockpit">Cockpit</button>
+        <button data-cam="overview">Map</button>
+        <button data-cam="orbit">Orbit</button>
+      </div>
+      <div class="seg" role="group" aria-label="Playback speed" id="speedSeg">
+        <button data-speed="1" class="on">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="4">4×</button>
+      </div>
+    </div>
+
+    <canvas id="minimap" class="minimap" aria-label="Track map"></canvas>
+
+    <div class="banner" id="banner" hidden></div>
+
+    <section class="story" id="story" aria-live="polite">
+      <div class="story-top">
+        <span class="step" id="storyStep">1 / 6</span>
+        <span class="dots" id="storyDots"></span>
+      </div>
+      <h2 id="storyTitle">--</h2>
+      <p id="storyBody"></p>
+      <div class="story-actions">
+        <button type="button" class="ghost" id="storyPrev">Back</button>
+        <button type="button" class="ghost" id="storyReplay">Replay</button>
+        <button type="button" class="primary small" id="storyNext">Next</button>
+      </div>
+    </section>
+
+    <section class="lab" id="lab" hidden>
+      <div class="lab-top">
+        <h2>New circuit</h2>
+        <button type="button" class="primary small" id="labNew">New track</button>
+      </div>
+      <p class="fine" id="labSeed">--</p>
+      <div class="pilots" id="labPilots"></div>
+      <p class="fine" id="labTally"></p>
+    </section>
+
+    <aside class="legend" id="legend" hidden></aside>
+
+    <div class="race-card" id="raceCard" hidden>
+      <h2>Race the policy</h2>
+      <p>Same jet and physics. The other jet is the policy, flying live.</p>
+      <dl class="keys">
+        <dt>← →</dt><dd>Bank and turn</dd>
+        <dt>↓ ↑</dt><dd>Pull up, push down</dd>
+        <dt>W / S</dt><dd>Throttle</dd>
+        <dt>A / D</dt><dd>Rudder</dd>
+        <dt>R</dt><dd>Restart</dd>
+      </dl>
+      <label class="check"><input type="checkbox" id="assist" checked> Assist: arrows set the bank angle, letting go levels out</label>
+      <p class="fine">Gamepad: left stick flies, triggers set throttle.</p>
+      <button class="primary" id="raceGo">Start</button>
+      <div class="pb" id="pbRead"></div>
+    </div>
+
+    <div class="result" id="result" hidden>
+      <h2 id="resTitle">Lap complete</h2>
+      <div class="res-grid">
+        <div><span class="k">You</span><b id="resYou">--</b></div>
+        <div><span class="k">Policy</span><b id="resAi">--</b></div>
+      </div>
+      <p id="resNote"></p>
+      <button class="primary" id="resAgain">Fly again <kbd>R</kbd></button>
+    </div>
+  </main>
+
+  <aside class="rail">
+    <section class="block">
+      <header><h3>Observation</h3><span class="tag" id="seesTag">--</span></header>
+      <div class="sees">
+        <div class="compass" aria-hidden="true"><i id="bearingArrow"></i></div>
+        <dl class="facts">
+          <dt>Next gate</dt><dd id="seeGate">--</dd>
+          <dt>Distance</dt><dd id="seeDist">--</dd>
+          <dt>Direction</dt><dd id="seeBearing">--</dd>
+          <dt>Height</dt><dd id="seeHeight">--</dd>
+          <dt>Speed</dt><dd id="seeSpeed">--</dd>
+        </dl>
+      </div>
+      <p class="narrate" id="narrate">--</p>
+    </section>
+    <section class="block">
+      <header><h3>Action</h3></header>
+      <div class="decide" id="decide"></div>
+    </section>
+    <section class="block">
+      <header><h3>Reward</h3><span class="tag" id="rewardTag"></span></header>
+      <ol class="ledger" id="ledger"></ol>
+    </section>
+    <section class="block grow">
+      <header><h3>Network</h3><span class="tag">22-128-128-4</span></header>
+      <canvas id="net" aria-label="Live activations of the policy network"></canvas>
+      <p class="fine">Hidden activations this frame. Blue negative, amber positive.</p>
+    </section>
+  </aside>
+
+  <footer class="timeline">
+    <span class="tl-label" id="tlLabel">Checkpoints</span>
+    <div class="ticks" id="ticks" role="listbox" aria-label="Training checkpoints"></div>
+  </footer>
+</div>
+
+<article id="report">
+  <div class="wrap">
+    <h1>Results</h1>
+    <p class="lede" id="lede">Loading results.</p>
+
+    <section>
+      <h2>Training the specialist</h2>
+      <p class="caption">Episode return (mean, 10th–90th percentile band). Ticks are the exported checkpoints; click one to fly it.</p>
+      <div class="plot" id="rewardChart"></div>
+      <p class="caption">Share of training episodes ending in a lap. Half of them start partway round, so this runs ahead of the evaluation below.</p>
+      <div class="plot short" id="lapChart"></div>
+      <h3>Checkpoints</h3>
+      <p class="caption" id="evalCaption"></p>
+      <div class="table-wrap"><table id="evalTable"></table></div>
+    </section>
+
+    <section id="general">
+      <h2>Unseen circuits</h2>
+      <p class="caption" id="generalCaption"></p>
+      <div class="bars" id="generalBars"></div>
+      <p class="aside" id="generalNote"></p>
+    </section>
+
+    <section id="ablation">
+      <h2>Ablation</h2>
+      <p class="caption">Each configuration trained from scratch with the same settings (16 environments × 512 steps per update, 4M steps); each checkpoint evaluated on 30 starts of the fixed circuit. Bars show the steps until the first checkpoint that lapped all 30; dots are seeds.</p>
+      <div class="bars" id="ablationBars"></div>
+      <p class="aside" id="ablationNote"></p>
+    </section>
+
+    <section class="two">
+      <div>
+        <h2>Environment</h2>
+        <ul class="plain">
+          <li>Point-mass flight-path model at 30 Hz. A centered stick holds the flight path; pulling adds load factor up to what the speed allows, so a slow jet stalls and sinks. The nose sits along the velocity plus the angle of attack.</li>
+          <li>Observation (22): next two gates in the body frame, velocity, gravity direction, rates, throttle, altitude, speed, angle of attack, gate index, distance, g.</li>
+          <li>Action (4): throttle rate, pitch (load factor), roll rate, rudder.</li>
+          <li>Reward: progress toward the next gate, a pass bonus scaled by how centered it was, −40 for a crash, −20 for 20 s without a gate, and a lap bonus scaled by pace.</li>
+        </ul>
+      </div>
+      <div>
+        <h2>In the browser</h2>
+        <p><code>jet_env.py</code> is ported to TypeScript and the actor network runs as a plain matrix multiply on the exported weights, 30 times a second. The track generator is ported too, so New track flies circuits no policy has seen. A parity test replays a Python-recorded episode and requires the state to match every step to 10<sup>−9</sup> m and the actions to match PyTorch to 10<sup>−4</sup>. Reported numbers come from Python.</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span>JetRL</span>
+      <span>Stable-Baselines3 PPO, Gymnasium, three.js</span>
+    </footer>
+  </div>
+</article>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

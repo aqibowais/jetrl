@@ -54,15 +54,10 @@ def check_trim():
     env = JetEnv()
     env.reset(seed=0)
     env.position[:] = [0.0, 70.0, 0.0]
-    env.velocity[:] = [0.0, 0.0, 42.0]
-    env.yaw = 0.0
-    env.pitch = 0.0
-    env.roll = 0.0
-    env.pitch_rate = 0.0
+    env.bank = 0.0
     env.roll_rate = 0.0
-    env.yaw_rate = 0.0
+    env.set_velocity([0.0, 0.0, 42.0])
     env.throttle = 0.58
-    env.speed = 42.0
     env.prev_dist = env._gate_distance()
     terminated = False
     for _ in range(90):
@@ -70,8 +65,8 @@ def check_trim():
         if terminated or truncated:
             break
     print(f"trim altitude after 3s: {env.position[1]:.1f} m  speed {env.speed:.1f}")
-    if env.position[1] < 40.0:
-        raise SystemExit("trimmed flight fell out of the sky; lift sign or magnitude is wrong")
+    if abs(env.position[1] - 70.0) > 2.0:
+        raise SystemExit("centered stick should hold altitude")
     print("trim flight: ok")
     env.close()
 
@@ -80,7 +75,7 @@ def check_crash():
     env = JetEnv()
     env.reset(seed=1)
     env.position[1] = 8.0
-    env.velocity[:] = [0.0, -55.0, 8.0]
+    env.set_velocity([0.0, -55.0, 8.0])
     reward = 0.0
     terminated = False
     truncated = False
@@ -103,8 +98,8 @@ def _place_behind(env: JetEnv, index: int, back: float = 0.8, speed: float = 55.
     normal = env.gate_normals[index]
     center = env.gate_centers[index]
     env.position = center - normal * back
-    env.velocity = normal * speed
-    env.speed = speed
+    env.bank = 0.0
+    env.set_velocity(normal * speed)
     env.next_gate = index
     env.prev_dist = env._gate_distance()
 
@@ -172,15 +167,13 @@ def heuristic_action(env: JetEnv) -> np.ndarray:
     offset = aim - env.position
     dist = float(np.linalg.norm(offset))
     desired = offset / max(dist, 1e-6)
-    desired_yaw = float(np.arctan2(desired[0], desired[2]))
-    desired_pitch = float(np.arcsin(np.clip(desired[1], -0.55, 0.55)))
-    yaw_err = wrap_angle(desired_yaw - env.yaw)
-    pitch_err = desired_pitch - env.pitch
-    desired_roll = float(np.clip(yaw_err * 1.5, -0.95, 0.95))
-    roll_err = desired_roll - env.roll
-    pitch_cmd = float(np.clip(pitch_err * 2.8 - env.pitch_rate * 0.5, -1.0, 1.0))
-    roll_cmd = float(np.clip(roll_err * 3.0 - env.roll_rate * 0.4, -1.0, 1.0))
-    yaw_cmd = float(np.clip(yaw_err * 0.35, -1.0, 1.0))
+    desired_heading = float(np.arctan2(desired[0], desired[2]))
+    desired_gamma = float(np.arcsin(np.clip(desired[1], -0.55, 0.55)))
+    yaw_err = wrap_angle(desired_heading - env.heading)
+    desired_bank = float(np.clip(yaw_err * 2.5, -1.2, 1.2))
+    roll_cmd = float(np.clip((desired_bank - env.bank) * 3.0, -1.0, 1.0))
+    pitch_cmd = float(np.clip((desired_gamma - env.gamma) * 3.0, -1.0, 1.0))
+    yaw_cmd = 0.0
     target_speed = 44.0 if abs(yaw_err) < 0.45 else 36.0
     if env.speed < target_speed - 1.5:
         throttle_cmd = 1.0
